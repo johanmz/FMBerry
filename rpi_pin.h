@@ -26,6 +26,7 @@
 
 #include <stdint.h>
 #include <unistd.h>
+#include <gpiod.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -41,30 +42,12 @@ enum PIN_EDGE_MODE { EDGE_NONE = 0, EDGE_RISING, EDGE_FALLING, EDGE_BOTH };
 // must be called before any other rpi_pin_* functions if revision is 1
 int rpi_pin_init(int pi_revision);
 
-// export gpio pin, must be called before other get/set functions
-int rpi_pin_export(uint8_t pin, enum PIN_DIRECTION dir);
-int rpi_pin_set_dir(uint8_t pin, enum PIN_DIRECTION dir);
-int rpi_pin_get(uint8_t pin); // read input value
-int rpi_pin_set(uint8_t pin, uint8_t value); // set output value 0-1
-int rpi_pin_unexport(uint8_t pin);
-
-// functions for pin change of value edge detection support using poll()
-// returns pin's file descriptor
-int rpi_pin_fd(uint8_t pin);
+int rpi_pin_set(struct gpiod_line *ledline, uint8_t value); // set output value 0-1
 
 // enables POLLPRI event on edge detection, pin must be in INPUT mode
-int rpi_pin_poll_enable(uint8_t pin, enum PIN_EDGE_MODE mode);
+int rpi_pin_poll_enable(uint8_t pin, struct gpiod_chip **pchip, struct gpiod_line **pline);
 
-// clears pending polls and returns current value
-static inline int rpi_pin_poll_clear(int fd)
-{
-	char val;
-
-	lseek(fd, 0, SEEK_SET);
-	read(fd, &val, 1);
-
-	return val - '0';
-}
+int rpi_pin_enable_led (uint8_t pin, struct gpiod_chip *chip, struct gpiod_line **pledline);
 
 #ifdef __cplusplus
 }

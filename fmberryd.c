@@ -27,6 +27,7 @@
 #include <confuse.h>
 #include <sys/stat.h>
 #include <netinet/in.h>
+#include <gpiod.h>
 
 #define RPI_REVISION RPI_REV2
 
@@ -44,12 +45,16 @@ static int start_daemon = 1;
 
 int main(int argc, char **argv)
 {
+	
+	
 	//Check if user == root
+	/*
 	if(geteuid() != 0)
 	{
 	  puts("Please run this software as root!");
 	  exit(EXIT_FAILURE);
 	}
+    */
 
 	// check for non-daemon mode for debugging
 	for(int i = 1; i < argc; i++) {
@@ -135,7 +140,7 @@ int main(int argc, char **argv)
 	syslog(LOG_NOTICE, "Successfully initialized ns741 transmitter.\n");
 
 	int nfds;
-	struct pollfd  polls[2];
+	struct pollfd  polls[1];
 
 	// open TCP listener socket, will exit() in case of error
 	int lst = ListenTCP(cfg_getint(cfg, "tcpport"));
@@ -168,21 +173,33 @@ int main(int argc, char **argv)
 	// Use RPI_REV1 for earlier versions of Raspberry Pi
 	rpi_pin_init(RPI_REVISION);
 
-	// Get file descriptor for RDS handler
-	polls[1].revents = 0;
+	// declare RDS pin structs, for libgpiod functions
+	// pointer to a pointer needed since chip and line are pointers and set in a function
+	struct gpiod_line_event event;
+	struct gpiod_chip *chip;
+	struct gpiod_chip **pchip;
+	pchip = &chip;
+	struct gpiod_line *line;
+	struct gpiod_line **pline;
+	pline=&line;
+	struct gpiod_line *ledline;
+	struct gpiod_line **pledline;
+	pledline=&ledline;	
+	struct timespec ts = { 1, 0 };	
+	int ret = 0;
+
+	int rds=-1;
+
 	if (mmr70.rds)
 	{
-		int rds = rpi_pin_poll_enable(rdsint, EDGE_FALLING);
+		rds = rpi_pin_poll_enable(rdsint, pchip, pline);
 	    if (rds < 0) {
-	        printf("Couldn't enable RDS support\n");
+			syslog(LOG_ERR, "Couldn't enable RDS support\n");
 	        run = 0;
 	    }
-		polls[1].fd = rds;
-		polls[1].events = POLLPRI;
 		nfds = 2;
-		if (ledpin > 0) {
-			rpi_pin_export(ledpin, RPI_OUTPUT);
-			rpi_pin_set(ledpin, led);
+		if (ledpin > 0 && rds >= 0) {
+			ret = rpi_pin_enable_led (ledpin, chip, pledline);
 		}
 
 		ns741_rds(1);
@@ -191,22 +208,40 @@ int main(int argc, char **argv)
 
 	// main polling loop
 	int ledcounter = 0;
-	while(run) {
-		if (poll(polls, nfds, -1) < 0)
-			break;
 
-		if (polls[1].revents) {
-			rpi_pin_poll_clear(polls[1].fd);
-			ns741_rds_isr();
-			// flash LED if enabled on every other RDS refresh cycle
-			if (ledpin > 0) {
+	while(run) {
+		ret = gpiod_line_event_wait(line, &ts);
+		if (ret < 0) {
+			syslog(LOG_ERR, "RDS wait event notification failed\n");
+			ret = -1;
+			gpiod_line_release(line);
+			gpiod_chip_close(chip);
+			break;
+		} else if (ret == 0) {
+			syslog(LOG_ERR, "RDS wait event notification timeout\n");
+			continue;
+		}
+
+		ret = gpiod_line_event_read(line, &event);
+		if (ret < 0) {
+			syslog(LOG_ERR, "RDS read last event notification failed\n");
+			ret = -1;
+			gpiod_line_release(line);
+			gpiod_chip_close(chip);
+			break;
+		}
+		ns741_rds_isr();
+		if (ledpin > 0 && rds >= 0) {
 				ledcounter++;
 				if (!(ledcounter % 80)) {
 					led ^= 1;
-					rpi_pin_set(ledpin, led);
+					rpi_pin_set(ledline, led);
 				}
-			}
 		}
+
+
+		if (poll(polls, nfds, -1) < 0)
+		break;
 
 		if (polls[0].revents)
 			ProcessTCP(lst, &mmr70);
@@ -214,18 +249,19 @@ int main(int argc, char **argv)
 
 	// clean up at exit
 	ns741_power(0);
-	if (mmr70.rds)
-		rpi_pin_unexport(rdsint);
 
-	if (ledpin > 0) {
-		rpi_pin_set(ledpin, 0);
-		rpi_pin_unexport(ledpin);
+	if (ledpin > 0 && rds >= 0) 
+		gpiod_line_release(ledline);
+
+	if (rds){
+		gpiod_line_release(line);
+		gpiod_chip_close(chip);		
 	}
 
 	close(lst);
 	closelog();
-
-	return 0;
+	
+	return ret;
 }
 
 int ListenTCP(uint16_t port)

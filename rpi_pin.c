@@ -26,6 +26,8 @@
 #include <fcntl.h>
 #include <errno.h>
 #include <stdlib.h>
+#include <syslog.h>
+#include <gpiod.h>
 
 #include "rpi_pin.h"
 
@@ -70,171 +72,80 @@ int rpi_pin_init(int pi_revision)
 	return 0;
 }
 
-int rpi_pin_export(uint8_t pin, enum PIN_DIRECTION dir)
+// set output value for the led
+int rpi_pin_set(struct gpiod_line *ledline, uint8_t value)
 {
-	FILE *fd;
-	char file[128];
+	int ret;
+	ret = gpiod_line_set_value(ledline, value);
+	if (ret < 0) {
+		syslog(LOG_ERR, "Could not set value for LED\n");
+		gpiod_line_release(ledline);
+	}
+}
+
+int rpi_pin_enable_led (uint8_t pin, struct gpiod_chip *chip, struct gpiod_line **pledline)
+{
+	struct gpiod_line *ledline;
+	int ret;
 
 	if ((pin > 63) || !pvalid_pins[pin]) {
-		_IFDEB(fprintf(stderr, "%s: invalid pin #%u\n", __func__, pin));
-		return -1;
-	}
-
-	if ((fd = fopen ("/sys/class/gpio/export", "w")) == NULL) {
-		_IFDEB(fprintf(stderr, "%s: unable to export pin #%u\n", __func__, pin));
-		return -1;
-	}
-	fprintf(fd, "%d\n", pin);
-	fclose(fd);
-
-	sprintf(file, "/sys/class/gpio/gpio%d/direction", pin);
-	if ((fd = fopen (file, "w")) == NULL) {
-		_IFDEB(fprintf(stderr, "%s: unable to set direction for pin #%u\n", __func__, pin));
-		return -1;
-	}
-
-	pin_flags[pin] |= FPIN_EXPORTED;
-	if (dir == RPI_INPUT)
-		pin_flags[pin] |= FPIN_DIR_INPUT;
-	fprintf(fd, (dir == RPI_INPUT) ? "in\n" : "out\n");
-	fclose(fd);
-
-	sprintf(file, "/sys/class/gpio/gpio%d/value", pin);
-	pin_fds[pin] = open(file, O_RDWR);
-
-	return 0;
-}
-
-int rpi_pin_set_dir(uint8_t pin, enum PIN_DIRECTION dir)
-{
-	FILE *fd;
-	char file[128];
-
-	if ((pin > 63) || !pvalid_pins[pin])
-		return -1;
-	
-	if (!(pin_flags[pin] & FPIN_EXPORTED))
-		return -1;
-
-	sprintf(file, "/sys/class/gpio/gpio%d/direction", pin);
-	if ((fd = fopen (file, "w")) == NULL) {
-		_IFDEB(fprintf(stderr, "%s: unable to set direction for pin #%u\n", __func__, pin));
-		return -1;
-	}
-
-	if (dir == RPI_INPUT) {
-		pin_flags[pin] |= FPIN_DIR_INPUT;
-		fprintf(fd, "in\n");
-	}
-	else {
-		pin_flags[pin] &= ~FPIN_DIR_INPUT;
-		fprintf(fd, "out\n");
-	}
-	fclose(fd);
-
-	return 0;
-}
-
-// read input value:
-//	0 - low
-//	1 - high
-// -1 - error
-int rpi_pin_get(uint8_t pin)
-{
-	// this will check pin validity as well
-	int fd = rpi_pin_fd(pin);
-
-	if (fd < 0)
-		return -1;
-
-	if (!(pin_flags[pin] & FPIN_DIR_INPUT))
-		return -1;
-
-	return rpi_pin_poll_clear(fd);
-}
-
-// set output value
-int rpi_pin_set(uint8_t pin, uint8_t value)
-{
-	// this will check pin validity as well
-	int fd = rpi_pin_fd(pin);
-
-	if (fd < 0)
-		return -1;
-
-	if (pin_flags[pin] & FPIN_DIR_INPUT)
-		return -1;
-	
-	lseek(fd, 0, SEEK_SET);
-	return (write(fd, value ? "1" : "0", 1) == 1) ? 0 : -1;
-}
-
-int rpi_pin_unexport(uint8_t pin)
-{
-	FILE *fd;
-	char file[128];
-
-	if ((pin > 63) || !pvalid_pins[pin])
-		return -1;
-
-	if (!(pin_flags[pin] & FPIN_EXPORTED))
-		return 0;
-
-	if ((fd = fopen ("/sys/class/gpio/unexport", "w")) == NULL) {
-		_IFDEB(fprintf(stderr, "%s: unable to unexport pin #%u\n", __func__, pin));
-		return -1;
-	}
-	fprintf(fd, "%d\n", pin);
-	fclose(fd);
-
-	pin_flags[pin] = 0;
-	close(pin_fds[pin]);
-	pin_fds[pin] = -1;
-
-	return 0;
-}
-
-// functions for pin change of value edge detection support using poll()
-
-// returns pin's file descriptor
-int rpi_pin_fd(uint8_t pin)
-{
-	if ((pin > 63) || !pvalid_pins[pin])
-		return -1;
-
-	if (pin_flags[pin] & FPIN_EXPORTED)
-		return pin_fds[pin];
-
+	syslog(LOG_ERR, "Invalid pin for LED\n");
 	return -1;
+	}
+
+	*pledline = gpiod_chip_get_line(chip, pin);
+	ledline=*pledline;
+	if (!ledline) {
+		syslog(LOG_ERR, "Request line for LED failed\n");
+		return -1;
+	}
+
+	ret = gpiod_line_request_output(ledline, "Consumer", 0);
+	if (ret < 0) {
+		syslog(LOG_ERR, "Request output for LED failed\n");
+		gpiod_line_release(ledline);
+		return -1;
+	}
+
+	return 0;
+
 }
 
-// enables POLLPRI on edge detection, pin must be in INPUT mode
-// returns file descriptor to be used with poll() or -1 as error
-int rpi_pin_poll_enable(uint8_t pin, enum PIN_EDGE_MODE mode)
+// sets up the RDS pin, for signalling when the MMR70 is ready to receive RDS data
+// returns -1 as error
+// sets *line, used in the main loop for the wait event of the MMR70 to receive RDS data
+int rpi_pin_poll_enable(uint8_t pin, struct gpiod_chip **pchip, struct gpiod_line **pline)
 {
-	FILE *fd;
-	char file[128];
+	struct gpiod_chip *chip;
+	struct gpiod_line *line;
+	int ret;
 
 	if ((pin > 63) || !pvalid_pins[pin])
 		return -1;
 
-	if (!(pin_flags[pin] & FPIN_EXPORTED))
-		rpi_pin_export(pin, RPI_INPUT);
-
-	if (pin_fds[pin] < 0)
-		return -1;
-
-	sprintf(file, "/sys/class/gpio/gpio%d/edge", pin);
-	if ((fd = fopen (file, "w")) == NULL) {
-		_IFDEB(fprintf(stderr, "%s: setting edge detection failed for pin #%u: %s\n", __func__, pin));
+    *pchip = gpiod_chip_open_by_name("gpiochip0");
+	chip = *pchip;
+	if (!chip) {
+		syslog(LOG_ERR, "RDS open gpiochip0 failed\n");
 		return -1;
 	}
 
-	fputs(irq_mode[mode], fd);
-	fclose(fd);
+	*pline = gpiod_chip_get_line(chip, pin);
+	line = *pline;
+	if (!line) {
+		syslog(LOG_ERR, "RDS get line failed\n");
+		gpiod_chip_close(chip);
+		return -1;
+	}
 
-	rpi_pin_poll_clear(pin_fds[pin]);
-
-	return pin_fds[pin];
+	ret = gpiod_line_request_falling_edge_events(line, "Consumer");
+	if (ret < 0) {
+		syslog(LOG_ERR, "RDS request falling edge event failed\n");
+		gpiod_line_release(line);
+		gpiod_chip_close(chip);
+		return -1;
+	}
+	
+	return 0;
 }
 

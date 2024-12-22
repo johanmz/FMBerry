@@ -55,7 +55,7 @@ First update your local package repository with
 ``sudo apt-get update``
 
 then install all needed software with the following command:
-``sudo apt-get install i2c-tools build-essential git libconfuse-dev``
+``sudo apt-get install i2c-tools build-essential git libconfuse-dev libgpiod-dev``
  
 ### Step 3: Finding out your hardware revision
 
@@ -129,11 +129,18 @@ It currently allows the following commands:
 
 That's it! :)
 ### Step 7: Debugging
-FMBerry writes debugging output to /var/log/syslog.
+FMBerry writes debugging output to the journal.
 
-You can watch the information by running ``ctlfmberry log``. It's essentially just a ```cat /var/log/syslog | grep fmberryd```
+You can watch the information by running ``ctlfmberry log``. It's essentially just a ```journalctl | grep fmberryd```
 
 It will tell you what's wrong. 
+
+###  Raspberry Pi OS Bookworm or Ubuntu 24.04 LTS / 24.10 for the Raspberry PI
+Previous versions of FMBerry will not work anymore on Rasperry Pi OS Bookworm and Ubuntu 24.04 LTS / 24.10 because the sysfs gpio interface is deprecated. This interface was used to read the RDS pin from the MMR-70 and to (optionally) set the LED pin. Now libgpiod (v1.6) is used instead of sysfs gpio.
+
+Follow the instructions below to update FMBerry, don't forget to run ```apt-get install``` since a new dependency (libgpiod-dev) is added.
+
+This version of FMBerry should also work on previous versions of Raspberry Pi OS.
 
 ### Updating the software
 Please check for new dependencies. You can safely just run the ```apt-get install``` command again. It will only install new dependencies if necessary.
@@ -143,6 +150,7 @@ First stop the daemon by typing ```/etc/init.d/fmberry stop```.
 Then run ```git pull``` followed by a ```make``` and a ```sudo make install```.
 
 You can then start FMBerry again with ```/etc/init.d/fmberry start```.
+
 ## Notes
 * The Daemon itself is essentially a simple TCP server. It is listening to Port 42516. (set in fmberry.conf) You can control it by sending the exact same commands you would give to ctlfmberry.
 * For information on How to control the Daemon have a look into ctlfmberry. It's a simple shell script.
