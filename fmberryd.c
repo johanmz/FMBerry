@@ -2,7 +2,7 @@
 	FMBerry - an cheap and easy way of transmitting music with your Pi.
     Copyright (C) 2011-2013 by Manawyrm
 	Copyright (C) 2013      by Andrey Chilikin (https://github.com/achilikin)
-	Switch from sysfs gpio interface to libgpio v2.1.3 by johanmz, 2024
+	Switch from sysfs gpio interface to libgpio v2.1.3 by johanmz (https://github.com/johanmz), 2024
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -339,20 +339,21 @@ int main(int argc, char **argv)
 
 	// main polling loop
 	int ledcounter = 0;
+	int rds_wait_timeout = 0;
 
 	while(run) {
+		// next request for RDS data should come in 21ms so we wait max 25ms
 		ret = gpiod_line_request_wait_edge_events (request, 25000000);
-		//ret = gpiod_line_event_wait(line, &ts);
 		if (ret < 0) {
 			syslog(LOG_ERR, "RDS wait event notification failed\n");
 			ret = -1;
 			break;
 		} else if (ret == 0) {
-			syslog(LOG_ERR, "RDS wait event notification timeout\n");
+			if (++rds_wait_timeout<=25)
+				syslog(LOG_ERR, "RDS wait event notification timeout (max 25 messages) %d\n", rds_wait_timeout); //avoid filling up the journal in no-time if there's an issue
 			continue;
 		}
 		ret = gpiod_line_request_read_edge_events(request, event_buffer, event_buf_size);
-		//ret = gpiod_line_event_read(line, &event);
 		if (ret < 0) {
 			syslog(LOG_ERR, "RDS read last event notification failed\n");
 			ret = -1;
@@ -376,9 +377,6 @@ int main(int argc, char **argv)
 
 	// clean up at exit
 	ns741_power(0);
-
-	if (ledpin > 0 && rds >= 0) 
-		//gpiod_line_release(ledline);
 
 	if (rds){
 		if (ledpin > 0){
