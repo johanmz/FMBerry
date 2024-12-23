@@ -26,7 +26,6 @@ Installation
 -------------
 This software was developed under Raspbian Wheezy 2013-02-09.
 
-## Arch Linux users: [AUR - fmberry-rpi-git](https://aur.archlinux.org/packages/fmberry-rpi-git/)
 
 ### Step 1: Enabling I²C
 
@@ -85,14 +84,15 @@ If you connect you MMR-70 to I²C bus 0 on Raspberry Pi rev2 make sure that head
 
 ![Output of i2cdetect](http://tbspace.de/holz/csuqzygpwb.png)
 
-### Step 5: Updating libgpiod if you use Raspberry Pi OS Bookworm or Ubuntu 24.04 LTS / 24.10
+### Step 5: Updating libgpiod on Raspberry Pi OS Bookworm or Ubuntu 24.04 LTS / 24.10
 Previous versions of FMBerry will not work anymore on Rasperry Pi OS Bookworm and Ubuntu 24.04 LTS / 24.10 because the sysfs gpio interface is deprecated. This interface was used to read the RDS pin from the MMR-70 and to (optionally) set the LED pin. Now libgpiod is used instead of sysfs gpio.
 
-The version of libgpiod in Bookworm is 1.6.3. This is an old version, most likely in the next version of Raspberry Pi OS this will be upgrade to version 2.x. To avoid another update of FMBerry this version works with libgpio 2.x (tested with 2.1.3) and not with 1.6.3. Therefore libgpiod needs to be updated on Bookworm. Since there is no package it has to be installed from the source files:
+The version of libgpiod in Bookworm is 1.6.3. This is an old version,  likely in the next version of Raspberry Pi OS this will be upgrade to version 2.x. To avoid yet again the need for an update of FMBerry, this version works with libgpiod 2.x (tested with 2.1.3) and not with 1.6.x. Therefore libgpiod needs to be updated on Bookworm. Since there is no package (yet) for libgpiod v2.x (note that the deb package libgpiod2 is actually v1.6.3 due to debian's naming convention!) it has to be installed from the source files.
+
+Installation steps:
 
 ```
-sudo apt-get install libtool
-sudo apt install autoconf-archive
+sudo apt install libtool autoconf-archive
 git clone -b v2.1.x https://git.kernel.org/pub/scm/libs/libgpiod/libgpiod.git
 ```
 
@@ -103,7 +103,7 @@ make
 sudo make install
 ```
 
-If building FMBerry in step 6 fails it might be necessary to rename references to the old v1.6.3 .so and .a files:
+If building FMBerry in step 6 fails with ``undefined reference to `gpiod_edge_event_buffer_new'`` or similar, it might be necessary to rename references to the old v1.6.3 .so and .a files:
 ```
 sudo mv //usr/lib/aarch64-linux-gnu/libgpiod.so //usr/lib/aarch64-linux-gnu/libgpiod.so.BAK
 sudo mv /usr/lib/aarch64-linux-gnu/libgpiod.a /usr/lib/aarch64-linux-gnu/libgpiod.a.BAK
@@ -161,7 +161,7 @@ You can watch the information by running ``ctlfmberry log``. It's essentially ju
 
 It will tell you what's wrong. 
 
-
+You can flush the journal with ```sudo journalctl --user --flush --rotate --vacuum-time=1s```
 
 ### Updating the software
 Please check for new dependencies. You can safely just run the ```apt-get install``` command again. It will only install new dependencies if necessary.
@@ -194,7 +194,7 @@ Turn up the volume/unmute your raspi with alsamixer.
 
 __I am getting compile errors.__
 
-Did you install all dependencies? (All lines with apt-get)
+Did you install all dependencies? (All lines with apt-get). And did you read step 5?
 
 __The transmission dies after a couple of minutes.__
 
