@@ -2,6 +2,8 @@
 	FMBerry - an cheap and easy way of transmitting music with your Pi.
     Copyright (C) 2011-2013 by Manawyrm
 	Copyright (C) 2013      by Andrey Chilikin (https://github.com/achilikin)
+	Switch from sysfs gpio interface to libgpio v2.1.3 by johanmz, 2024
+
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
     the Free Software Foundation, either version 3 of the License, or
@@ -29,6 +31,8 @@
 #include <netinet/in.h>
 #include <gpiod.h>
 
+#include <errno.h>
+
 #define RPI_REVISION RPI_REV2
 
 // RDS interrupt pin
@@ -42,6 +46,125 @@ mmr70_data_t mmr70;
 static cfg_t *cfg;
 static volatile int run = 1;
 static int start_daemon = 1;
+
+static struct gpiod_request_config *req_cfg = NULL;
+static struct gpiod_line_request *request = NULL;
+static struct gpiod_line_settings *settings;
+static struct gpiod_line_config *line_cfg;
+static struct gpiod_chip *chip;
+static int rds;
+
+// ideally the rds_input and led_output gpiod functions should have been placed in rpi_pin.c, however I could not make it work due to the static struct.
+// maybe there's someone out there with more C knowledge than me to make it work
+static struct gpiod_line_request *request_rds_input_line(const char *chip_path,
+						     unsigned int offset,
+						     const char *consumer)
+{
+
+	int ret;
+
+	chip = gpiod_chip_open(chip_path);
+	if (!chip)
+		return NULL;
+
+	settings = gpiod_line_settings_new();
+	if (!settings)
+		goto close_chip;
+
+	gpiod_line_settings_set_direction(settings, GPIOD_LINE_DIRECTION_INPUT);
+	gpiod_line_settings_set_edge_detection(settings, GPIOD_LINE_EDGE_FALLING);
+
+	line_cfg = gpiod_line_config_new();
+	if (!line_cfg)
+		goto free_settings;
+
+	ret = gpiod_line_config_add_line_settings(line_cfg, &offset, 1,
+						  settings);
+	if (ret)
+		goto free_line_config;
+
+	if (consumer) {
+		req_cfg = gpiod_request_config_new();
+		if (!req_cfg)
+			goto free_line_config;
+
+		gpiod_request_config_set_consumer(req_cfg, consumer);
+	}
+
+	request = gpiod_chip_request_lines(chip, req_cfg, line_cfg);
+	return request;
+
+
+free_line_config:
+	gpiod_line_config_free(line_cfg);
+
+free_settings:
+	gpiod_line_settings_free(settings);
+
+close_chip:
+	gpiod_chip_close(chip);
+
+	return NULL;
+}
+
+static struct gpiod_request_config *led_req_cfg = NULL;
+static struct gpiod_line_request *led_request = NULL;
+static struct gpiod_line_settings *led_settings;
+static struct gpiod_line_config *led_line_cfg;
+
+static struct gpiod_line_request *
+request_led_output_line(unsigned int offset,
+		    enum gpiod_line_value led_value, const char *consumer)
+{
+	int ret;
+
+	if (!chip)
+		return NULL;
+
+	led_settings = gpiod_line_settings_new();
+	if (!led_settings)
+		goto led_close;
+
+	gpiod_line_settings_set_direction(led_settings, GPIOD_LINE_DIRECTION_OUTPUT);
+	gpiod_line_settings_set_output_value(led_settings, led_value);
+
+	led_line_cfg = gpiod_line_config_new();
+	if (!led_line_cfg)
+		goto led_free_settings;
+
+	ret = gpiod_line_config_add_line_settings(led_line_cfg, &offset, 1,
+						  led_settings);
+	if (ret)
+		goto led_free_line_config;
+
+	if (consumer) {
+		led_req_cfg = gpiod_request_config_new();
+		if (!led_req_cfg)
+			goto led_free_line_config;
+
+		gpiod_request_config_set_consumer(led_req_cfg, consumer);
+	}
+
+	request = gpiod_chip_request_lines(chip, led_req_cfg, led_line_cfg);
+	return request;
+
+
+led_free_line_config:
+	gpiod_line_config_free(led_line_cfg);
+
+led_free_settings:
+	gpiod_line_settings_free(led_settings);
+
+led_close:
+	return NULL;
+}
+
+static enum gpiod_line_value toggle_line_value(enum gpiod_line_value value)
+{
+	return (value == GPIOD_LINE_VALUE_ACTIVE) ? GPIOD_LINE_VALUE_INACTIVE :
+						    GPIOD_LINE_VALUE_ACTIVE;
+}
+
 
 int main(int argc, char **argv)
 {
@@ -126,8 +249,7 @@ int main(int argc, char **argv)
 	if (cfg_parse(cfg, "/etc/fmberry.conf") == CFG_PARSE_ERROR)
 		return 1;
 
-	// get LED pin number
-	int led = 1; // led state
+	// get LED and RDS pin number
 	ledpin = cfg_getint(cfg, "ledpin");
 	rdsint = cfg_getint(cfg, "rdspin");
 
@@ -173,33 +295,42 @@ int main(int argc, char **argv)
 	// Use RPI_REV1 for earlier versions of Raspberry Pi
 	rpi_pin_init(RPI_REVISION);
 
-	// declare RDS pin structs, for libgpiod functions
-	// pointer to a pointer needed since chip and line are pointers and set in a function
-	struct gpiod_line_event event;
-	struct gpiod_chip *chip;
-	struct gpiod_chip **pchip;
-	pchip = &chip;
-	struct gpiod_line *line;
-	struct gpiod_line **pline;
-	pline=&line;
-	struct gpiod_line *ledline;
-	struct gpiod_line **pledline;
-	pledline=&ledline;	
-	struct timespec ts = { 1, 0 };	
-	int ret = 0;
+
+	// initialize RDS pin
+	static const char *const chip_path = "/dev/gpiochip0";
+	unsigned int line_offset = rdsint;
+
+	struct gpiod_edge_event_buffer *event_buffer;
+	struct gpiod_line_request *request;
+	struct gpiod_edge_event *event;
+	int i, ret, event_buf_size;
 
 	int rds=-1;
+	enum gpiod_line_value led_value = GPIOD_LINE_VALUE_ACTIVE;
 
 	if (mmr70.rds)
 	{
-		rds = rpi_pin_poll_enable(rdsint, pchip, pline);
-	    if (rds < 0) {
-			syslog(LOG_ERR, "Couldn't enable RDS support\n");
-	        run = 0;
-	    }
+		request = request_rds_input_line(chip_path, line_offset,"fmberryd");
+		if (!request) {
+			syslog(LOG_ERR, "Failed to request RDS line: %s\n", strerror(errno));
+			exit(EXIT_FAILURE);
+		}
+
+		event_buf_size = 1;
+		event_buffer = gpiod_edge_event_buffer_new(event_buf_size);
+		if (!event_buffer) {
+			syslog(LOG_ERR, "Failed to create GPIO event buffer");
+			exit(EXIT_FAILURE);
+		}	
+		rds = 1;
 		nfds = 2;
-		if (ledpin > 0 && rds >= 0) {
-			ret = rpi_pin_enable_led (ledpin, chip, pledline);
+		if (ledpin > 0) {
+			led_request = request_led_output_line(ledpin, GPIOD_LINE_VALUE_ACTIVE, "fmberryd");
+			if (!led_request){
+				syslog(LOG_ERR, "Failed to request LED line: %s\n", strerror(errno));
+				exit(EXIT_FAILURE);
+			}
+
 		}
 
 		ns741_rds(1);
@@ -210,36 +341,32 @@ int main(int argc, char **argv)
 	int ledcounter = 0;
 
 	while(run) {
-		ret = gpiod_line_event_wait(line, &ts);
+		ret = gpiod_line_request_wait_edge_events (request, 25000000);
+		//ret = gpiod_line_event_wait(line, &ts);
 		if (ret < 0) {
 			syslog(LOG_ERR, "RDS wait event notification failed\n");
 			ret = -1;
-			gpiod_line_release(line);
-			gpiod_chip_close(chip);
 			break;
 		} else if (ret == 0) {
 			syslog(LOG_ERR, "RDS wait event notification timeout\n");
 			continue;
 		}
-
-		ret = gpiod_line_event_read(line, &event);
+		ret = gpiod_line_request_read_edge_events(request, event_buffer, event_buf_size);
+		//ret = gpiod_line_event_read(line, &event);
 		if (ret < 0) {
 			syslog(LOG_ERR, "RDS read last event notification failed\n");
 			ret = -1;
-			gpiod_line_release(line);
-			gpiod_chip_close(chip);
 			break;
 		}
 		ns741_rds_isr();
-		if (ledpin > 0 && rds >= 0) {
+		if (ledpin > 0) {
 				ledcounter++;
 				if (!(ledcounter % 80)) {
-					led ^= 1;
-					rpi_pin_set(ledline, led);
+					led_value = toggle_line_value(led_value);
+					gpiod_line_request_set_value(led_request, ledpin, led_value);
 				}
 		}
-
-
+	
 		if (poll(polls, nfds, -1) < 0)
 		break;
 
@@ -251,11 +378,18 @@ int main(int argc, char **argv)
 	ns741_power(0);
 
 	if (ledpin > 0 && rds >= 0) 
-		gpiod_line_release(ledline);
+		//gpiod_line_release(ledline);
 
 	if (rds){
-		gpiod_line_release(line);
-		gpiod_chip_close(chip);		
+		if (ledpin > 0){
+			gpiod_request_config_free(led_req_cfg);
+			gpiod_line_config_free(led_line_cfg);
+			gpiod_line_settings_free(led_settings);
+		}
+		gpiod_request_config_free(req_cfg);
+		gpiod_line_config_free(line_cfg);
+		gpiod_line_settings_free(settings);
+		gpiod_chip_close(chip);	
 	}
 
 	close(lst);

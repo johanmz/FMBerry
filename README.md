@@ -55,7 +55,7 @@ First update your local package repository with
 ``sudo apt-get update``
 
 then install all needed software with the following command:
-``sudo apt-get install i2c-tools build-essential git libconfuse-dev libgpiod-dev``
+``sudo apt-get install i2c-tools build-essential git libconfuse-dev``
  
 ### Step 3: Finding out your hardware revision
 
@@ -85,7 +85,33 @@ If you connect you MMR-70 to I²C bus 0 on Raspberry Pi rev2 make sure that head
 
 ![Output of i2cdetect](http://tbspace.de/holz/csuqzygpwb.png)
 
-### Step 5: Building the software
+### Step 5: Updating libgpiod if you use Raspberry Pi OS Bookworm or Ubuntu 24.04 LTS / 24.10
+Previous versions of FMBerry will not work anymore on Rasperry Pi OS Bookworm and Ubuntu 24.04 LTS / 24.10 because the sysfs gpio interface is deprecated. This interface was used to read the RDS pin from the MMR-70 and to (optionally) set the LED pin. Now libgpiod is used instead of sysfs gpio.
+
+The version of libgpiod in Bookworm is 1.6.3. This is an old version, most likely in the next version of Raspberry Pi OS this will be upgrade to version 2.x. To avoid another update of FMBerry this version works with libgpio 2.x (tested with 2.1.3) and not with 1.6.3. Therefore libgpiod needs to be updated on Bookworm. Since there is no package it has to be installed from the source files:
+
+```
+sudo apt-get install libtool
+sudo apt install autoconf-archive
+git clone -b v2.1.x https://git.kernel.org/pub/scm/libs/libgpiod/libgpiod.git
+```
+
+Change directory to the libgpiod git directory and build libgpiod version 2.1.3:
+```
+./autogen.sh --enable-tools=yes --prefix=/usr
+make
+sudo make install
+```
+
+If building FMBerry in step 6 fails it might be necessary to rename references to the old v1.6.3 .so and .a files:
+```
+sudo mv //usr/lib/aarch64-linux-gnu/libgpiod.so //usr/lib/aarch64-linux-gnu/libgpiod.so.BAK
+sudo mv /usr/lib/aarch64-linux-gnu/libgpiod.a /usr/lib/aarch64-linux-gnu/libgpiod.a.BAK
+```
+
+This version of FMBerry should also work on previous versions of Raspberry Pi OS.
+
+### Step 6: Building the software
 To build the software execute the following commands (in your homefolder):
 
 ```
@@ -98,7 +124,7 @@ If you have got an old revision board, please open fmberryd.c and change the RPI
 ``make``
 
 Compiling the software will take a couple of seconds.
-### Step 6: Installing the software
+### Step 7: Installing the software
 FMBerry is essentially a daemon called fmberryd.
 To install it into your system path type 
 ```sudo make install```. 
@@ -128,19 +154,14 @@ It currently allows the following commands:
 * ``ctlfmberry stop`` - Stop FMBerry daemon
 
 That's it! :)
-### Step 7: Debugging
+### Step 8: Debugging
 FMBerry writes debugging output to the journal.
 
 You can watch the information by running ``ctlfmberry log``. It's essentially just a ```journalctl | grep fmberryd```
 
 It will tell you what's wrong. 
 
-###  Raspberry Pi OS Bookworm or Ubuntu 24.04 LTS / 24.10 for the Raspberry PI
-Previous versions of FMBerry will not work anymore on Rasperry Pi OS Bookworm and Ubuntu 24.04 LTS / 24.10 because the sysfs gpio interface is deprecated. This interface was used to read the RDS pin from the MMR-70 and to (optionally) set the LED pin. Now libgpiod (v1.6) is used instead of sysfs gpio.
 
-Follow the instructions below to update FMBerry, don't forget to run ```apt-get install``` since a new dependency (libgpiod-dev) is added.
-
-This version of FMBerry should also work on previous versions of Raspberry Pi OS.
 
 ### Updating the software
 Please check for new dependencies. You can safely just run the ```apt-get install``` command again. It will only install new dependencies if necessary.
@@ -160,6 +181,7 @@ You can then start FMBerry again with ```/etc/init.d/fmberry start```.
 https://github.com/Manawyrm/FMBerryRDSMPD (streaming of MPD title data via RDS)
 https://github.com/akkinitsch/FMBerryRemote (streaming of internet radio streams, controllable via Webinterface)
 http://achilikin.blogspot.de/2013/06/sony-ericsson-mmr-70-transmitter-led.html (enabling the LED on the transmitter to be software controllable)
+https://github.com/johanmz/MultiFMBerry (control multiple FMBerry's from the Raspberry Pi)
 
 ## Common problems
 __The daemon does not show anything.__
