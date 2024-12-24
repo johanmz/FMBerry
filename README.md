@@ -84,10 +84,10 @@ If you connect you MMR-70 to I²C bus 0 on Raspberry Pi rev2 make sure that head
 
 ![Output of i2cdetect](http://tbspace.de/holz/csuqzygpwb.png)
 
-### Step 5: Updating libgpiod on Raspberry Pi OS Bookworm or Ubuntu 24.04 LTS / 24.10
-Previous versions of FMBerry will not work anymore on Rasperry Pi OS Bookworm and Ubuntu 24.04 LTS / 24.10 because the sysfs gpio interface is deprecated. This interface was used to read the RDS pin from the MMR-70 and to (optionally) set the LED pin. Now the libgpiod library is used in FMBerry instead of sysfs gpio.
+### Step 5: Installing libgpiod v2
+Previous versions of FMBerry will not work anymore on Rasperry Pi OS Bookworm and Ubuntu 24.04 LTS / 24.10 because the sysfs gpio interface is deprecated. This interface was used to read the RDS pin from the MMR-70 and to (optionally) set the LED pin. In this version of FMBerry, the use of the sysfs gpiod interface has been replaced by the libgpiod library.
 
-The version of libgpiod in Bookworm is 1.6.3. This is an old version,  likely in the next version of Raspberry Pi OS this will be upgrade to version 2.x. To avoid yet again the need for an update of FMBerry, this version works with libgpiod 2.x (tested with 2.1.3) and not with 1.6.x. Therefore libgpiod needs to be updated on Bookworm. Since there is no package (yet) for libgpiod v2.x (note that the deb package libgpiod2 is actually v1.6.3 due to debian's naming convention!) it has to be installed from the source files.
+The version of libgpiod in Bookworm and Ubuntu 24.x is 1.6.3. This is an old version. In the next version of Raspberry Pi OS this likely will be replaced with version 2.x. This version of libgpiod is not backwards compatibel with version 1.x. To avoid yet again the need for an update of FMBerry in the near future, this version works with libgpiod 2.x (tested with 2.1.3). Since there is no package (yet) for libgpiod v2.x (note that the deb package libgpiod2 is actually v1.6.3 due to debian's naming convention!) it has to be installed from the source files.
 
 Installation steps:
 
@@ -103,7 +103,7 @@ make
 sudo make install
 ```
 
-This version of FMBerry should also work on previous versions of Raspberry Pi OS.
+Note that if libgpiod 2.x has become the default version in your distribution instead of v1.x, there is no need anymore to build libgpiod from source. Instead just add libgpiod-dev to the list of dependencies to be installed (step 2).
 
 ### Step 6: Building the software
 To build the software execute the following commands (in your homefolder):
