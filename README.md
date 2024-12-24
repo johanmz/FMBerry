@@ -85,7 +85,7 @@ If you connect you MMR-70 to I²C bus 0 on Raspberry Pi rev2 make sure that head
 ![Output of i2cdetect](http://tbspace.de/holz/csuqzygpwb.png)
 
 ### Step 5: Updating libgpiod on Raspberry Pi OS Bookworm or Ubuntu 24.04 LTS / 24.10
-Previous versions of FMBerry will not work anymore on Rasperry Pi OS Bookworm and Ubuntu 24.04 LTS / 24.10 because the sysfs gpio interface is deprecated. This interface was used to read the RDS pin from the MMR-70 and to (optionally) set the LED pin. Now libgpiod is used instead of sysfs gpio.
+Previous versions of FMBerry will not work anymore on Rasperry Pi OS Bookworm and Ubuntu 24.04 LTS / 24.10 because the sysfs gpio interface is deprecated. This interface was used to read the RDS pin from the MMR-70 and to (optionally) set the LED pin. Now the libgpiod library is used in FMBerry instead of sysfs gpio.
 
 The version of libgpiod in Bookworm is 1.6.3. This is an old version,  likely in the next version of Raspberry Pi OS this will be upgrade to version 2.x. To avoid yet again the need for an update of FMBerry, this version works with libgpiod 2.x (tested with 2.1.3) and not with 1.6.x. Therefore libgpiod needs to be updated on Bookworm. Since there is no package (yet) for libgpiod v2.x (note that the deb package libgpiod2 is actually v1.6.3 due to debian's naming convention!) it has to be installed from the source files.
 
@@ -101,12 +101,6 @@ Change directory to the libgpiod git directory and build libgpiod version 2.1.3:
 ./autogen.sh --enable-tools=yes --prefix=/usr
 make
 sudo make install
-```
-
-If building FMBerry in step 6 fails with ``undefined reference to `gpiod_edge_event_buffer_new'`` or similar, it might be necessary to rename references to the old v1.6.3 .so and .a files:
-```
-sudo mv //usr/lib/aarch64-linux-gnu/libgpiod.so //usr/lib/aarch64-linux-gnu/libgpiod.so.BAK
-sudo mv /usr/lib/aarch64-linux-gnu/libgpiod.a /usr/lib/aarch64-linux-gnu/libgpiod.a.BAK
 ```
 
 This version of FMBerry should also work on previous versions of Raspberry Pi OS.

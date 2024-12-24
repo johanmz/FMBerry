@@ -5,7 +5,7 @@ CFLAGS += -std=gnu99
 
 TARGET_DAEMON=fmberryd
 OBJS = fmberryd.o ns741.o i2c.o rpi_pin.o
-LIBS = -lconfuse -lgpiod
+LIBS = -lconfuse -l:libgpiod.so.3
 
 all: fmberryd
 
